@@ -27,6 +27,7 @@ The worker operates as a reverse proxy that:
 
 - Cloudflare account with Workers enabled
 - Analytics Engine enabled (go to "Storage & Databases -> Analytics Engine" in your Cloudflare dashboard)
+- KV namespace set
 - Node.js and pnpm installed
 - Wrangler CLI configured with your Cloudflare credentials
 
@@ -79,7 +80,30 @@ Create a Cloudflare API token for Analytics Engine queries:
 
 > **Important**: Keep your API token secure and never commit it to version control. This token has read access to your account analytics data.
 
-### 4. Configure Environment Variables
+### 4. Create KV Namespace
+
+Create a KV namespace for caching. This protects the Analytics Engine API, if your query endpoints get repeatedly called. The default cache time is 1 minute (minimum KV allows).
+
+```shell
+wrangler kv namespace create php_log
+```
+
+This will generate an ID for your KV namespace:
+
+```json
+{
+  "kv_namespaces": [
+    {
+      "binding": "php_log",
+      "id": "<YOUR_KV_ID>"
+    }
+  ]
+}
+```
+
+Replace this id with the placeholder in `wrangler.jsonc`.
+
+### 5. Configure Environment Variables
 
 Set your Analytics API token as a secret:
 
@@ -90,18 +114,18 @@ wrangler secret put ANALYTICS_API_TOKEN
 
 Note: The Analytics Engine dataset `PHP_LOG` will be created automatically when the worker first writes data to it.
 
-### 5. Set Admin Token (Optional)
+### 6. Set Query Token
 
-For additional security, you can set an admin token to protect the `/_php_log` endpoint:
+For additional security, you can set an admin token to protect the `/_php_log*` endpoints:
 
 ```bash
-wrangler secret put ADMIN_TOKEN
-# Enter a secure, randomly generated token when prompted
+wrangler secret put QUERY_TOKEN
+# Enter a secure, randomly generated token when prompted or hit enter for no auth
 ```
 
-This requires requests to include an `x-admin-token` header. If you prefer to keep the endpoint open, you can comment out the authentication code in `src/index.ts`.
+This requires requests to include an `autorization` header. If you prefer to keep the endpoint open, you can set an empty `QUERY_TOKEN`. Setting this secret is required, even if empty, otherwise the worker will complain.
 
-### 6. Update Domain Routing
+### 7. Update Domain Routing
 
 In `src/index.ts`, replace the domain placeholders:
 
@@ -130,14 +154,48 @@ switch (domain) {
 ### View PHP Access Logs
 
 ```
-GET /_php_log
+GET /_php_log_top
 ```
 
-**Authentication**: Requires `x-admin-token` header with your admin token (if authentication is enabled).
+> **Note:** `/_php_log` now defaults to `/_php_log_top`
+
+**Authentication**: Requires `authorization` header with your admin token (if authentication is enabled).
 
 **Example request**:
 ```bash
-curl -H "x-admin-token: your-secret-token" https://your-domain.com/_php_log
+curl -H "authorization: Bearer your-secret-token" https://your-domain.com/_php_log_top
+```
+
+Returns the top 20 PHP access attempts from the past month:
+
+```json
+[
+  {
+    "path": "/wp-admin/setup-config.php",
+    "hits": "123"
+  },
+]
+```
+
+```bash
+curl -H authorization: Bearer your-secret-token" https://your-domain.com/_php_log_last
+```
+
+Returns the last 20 PHP access attempts (capped to cast 24 hours):
+
+```json
+{
+  [
+    {
+      "timestamp": "2025-08-16T10:30:00.000Z",
+      "asn": "13335",
+      "path": "/wp-admin.php",
+      "country": "US",
+      "region": "CA",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36..."
+    }
+  ]
+}
 ```
 
 Returns the last 20 PHP access attempts from the past 24 hours:
@@ -158,7 +216,7 @@ Returns the last 20 PHP access attempts from the past 24 hours:
 }
 ```
 
-> **Note**: Authentication is enabled by default. If you prefer to keep the endpoint open (not recommended for production), you can comment out the authentication code in `src/index.ts` around lines 47-50.
+> **Note**: Authentication is optional. If you leave the `QUERY_TOKEN` secret empty (just hit enter when setting the secret with `wrangler secret put QUERY_TOKEN`), anyone can access the API endpoints. They are procteded via a KV cache against hammering though.
 
 ## Development
 
@@ -188,16 +246,9 @@ pnpm cf-typegen
 
 ## Security Considerations
 
-1. **Admin Endpoint**: The `/_php_log` endpoint is protected by admin token authentication. The token is set during configuration (step 5). If you prefer to disable authentication for testing purposes, comment out lines 47-50 in `src/index.ts`:
+1. **Query Endpoints**: The `/_php_log*` endpoints can get protected by token authentication. The token is set during configuration (step 5). If you prefer to disable authentication for testing purposes, set an empty `QUERY_TOKEN` secret.
 
-```typescript
-// const headerToken = request.headers.get("x-admin-token") || "";
-// if (headerToken !== env.ADMIN_TOKEN) {
-//   return new Response("Unauthorized", { status: 401 });
-// }
-```
-
-2. **API Token Security**: Keep your Analytics API token and Admin token secure. Never commit them to version control or expose them in client-side code.
+2. **API Token Security**: Keep your Analytics API token and query token secure. Never commit them to version control or expose them in client-side code.
 
 3. **Rate Limiting**: Consider implementing rate limiting for the analytics logging to prevent abuse.
 
@@ -207,24 +258,24 @@ pnpm cf-typegen
 
 The worker logs PHP access attempts with the following data points:
 
-- **Blobs**: `[path, country, region, user_agent]`
-- **Indexes**: `[asn]`
+- **Blobs**: `[path, country, region, user_agent, asn]`
+- **Indexes**: `[auto generated UUID]`
 - **Timestamp**: Automatic
 
-You can query this data using the Analytics Engine SQL API or through the built-in `/_php_log` endpoint.
+You can query this data using the Analytics Engine SQL API or through the built-in `/_php_log_last` and `/_php_log_top` endpoints.
 
 ## Custom Queries
 
-You can modify the SQL query in `src/index.ts` to customize the data retrieval:
+You can modify SQL queries and API endpoints in `src/index.ts` to customize the data retrieval:
 
 ```sql
 SELECT
   timestamp,
-  index1 AS asn,
   blob1 AS path,
   blob2 AS country,
   blob3 AS region,
-  blob4 AS ua
+  blob4 AS ua,
+  blob5 AS asn
 FROM PHP_LOG
 WHERE timestamp >= NOW() - INTERVAL '1' DAY
 ORDER BY timestamp DESC

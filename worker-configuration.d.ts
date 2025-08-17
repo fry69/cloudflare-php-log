@@ -3,9 +3,10 @@
 // Runtime types generated with workerd@1.20250813.0 2025-08-16
 declare namespace Cloudflare {
 	interface Env {
+        PHP_LOG_KV: KVNamespace;
 		ACCOUNT_ID: "<ACCOUNT_ID>";
 		ANALYTICS_API_TOKEN: string;
-        ADMIN_TOKEN: string;
+        QUERY_TOKEN: string;
 		SVC_PLACEHOLDER: Fetcher /* other worker */;
 		PHP_LOG_AE: AnalyticsEngineDataset;
 	}

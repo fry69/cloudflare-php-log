@@ -16,6 +16,12 @@
 			"dataset": "PHP_LOG"
 		}
 	],
+		"kv_namespaces": [
+		{
+			"binding": "PHP_LOG_KV",
+			"id": "<YOUR_KV_ID>"
+		}
+	],
 	/**
 	 * Smart Placement
 	 * Docs: https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
